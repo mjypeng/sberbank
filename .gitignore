@@ -1,5 +1,7 @@
-.pyc
-.xlsx
-.pkl
-.csv
-.zip
+*.pyc
+*.xlsx
+*.pkl
+*.csv
+*.zip
+*.txt
+*.docx
