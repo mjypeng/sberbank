@@ -1,13 +1,32 @@
 from common import *
 
+def pearsonr_w_price(d,col):
+    mask  = d[col].notnull()
+    return stats.pearsonr(np.log(d[mask].price_doc+1),d.loc[mask,col])
+
+def get_feat_rank(model,dtr,tr=None):
+    feat_rank  = pd.concat([
+        pd.Series(model.get_score(importance_type='weight')),
+        pd.Series(model.get_score(importance_type='gain')),
+        pd.Series(model.get_score(importance_type='cover'))],
+        1,keys=('wt','gain','cover')).reindex(index=dtr.feature_names)
+    if tr is not None:
+        for col in dtr.feature_names:
+            r,p  = pearsonr_w_price(tr,col)
+            feat_rank.loc[col,'corr_w_price'] = r
+            feat_rank.loc[col,'corr_w_price_p'] = p
+    return feat_rank
+
+def dataframe_to_dmatrix(d,col):
+    return xgb.DMatrix(d[col].fillna(-1),label=np.log(d.price_doc + 1) if 'price_doc' in d else None)
+
 tr  = pd.read_csv('train.csv')
 tt  = pd.read_csv('test.csv')
 tt['material']  = tt.material.astype(float)
 
 macro = pd.read_csv('macro.csv')
-macro_col  = ['cpi','ppi','usdrub','eurrub','fixed_basket','rent_price_4+room_bus','rent_price_3room_bus','rent_price_2room_bus','rent_price_1room_bus','rent_price_3room_eco','rent_price_2room_eco','rent_price_1room_eco']
-tr  = tr.merge(macro[['timestamp']+macro_col],how='left',on='timestamp',copy=False)
-tt  = tt.merge(macro[['timestamp']+macro_col],how='left',on='timestamp',copy=False)
+tr  = tr.merge(macro[['timestamp','cpi','ppi']],how='left',on='timestamp',copy=False)
+tt  = tt.merge(macro[['timestamp','cpi','ppi']],how='left',on='timestamp',copy=False)
 
 col_cat_thd  = {'sub_area':80, 'ID_metro':99, 'ID_railroad_station_walk':200, 'ID_railroad_station_avto':200, 'ID_big_road1':300, 'ID_big_road2':300, 'ID_railroad_terminal':300, 'ID_bus_terminal':500}
 for col in col_cat_thd:
@@ -22,7 +41,7 @@ tt  = preprocess(tt)
 col_sets  = [
     ['year','month','monthly_volume_invest','monthly_volume_occupy'],
     ['full_sq','life_ratio','floor','max_floor','floor_ratio'],
-    ['material=1.0','material=2.0','material=3.0','material=4.0','material=5.0','material=6.0'], # removed because only one row 
+    ['material=1.0','material=2.0','material=3.0','material=4.0','material=5.0','material=6.0'],
     ['build_age','num_room','kitch_ratio'],
     ['state=1.0','state=2.0','state=3.0','state=4.0'],
     ['is_investment'],
@@ -61,43 +80,57 @@ col_sets  = [
     ['green_part_1500','prom_part_1500','office_count_1500','office_sqm_1500','trc_count_1500','trc_sqm_1500','cafe_count_1500','cafe_sum_1500_min_price_avg','cafe_sum_1500_max_price_avg','cafe_avg_price_1500','cafe_count_1500_na_price','cafe_count_1500_price_500','cafe_count_1500_price_1000','cafe_count_1500_price_1500','cafe_count_1500_price_2500','cafe_count_1500_price_4000','cafe_count_1500_price_high','big_church_count_1500','church_count_1500','mosque_count_1500','leisure_count_1500','sport_count_1500','market_count_1500'],
     ['green_part_2000','prom_part_2000','office_count_2000','office_sqm_2000','trc_count_2000','trc_sqm_2000','cafe_count_2000','cafe_sum_2000_min_price_avg','cafe_sum_2000_max_price_avg','cafe_avg_price_2000','cafe_count_2000_na_price','cafe_count_2000_price_500','cafe_count_2000_price_1000','cafe_count_2000_price_1500','cafe_count_2000_price_2500','cafe_count_2000_price_4000','cafe_count_2000_price_high','big_church_count_2000','church_count_2000','mosque_count_2000','leisure_count_2000','sport_count_2000','market_count_2000'],
     ['green_part_3000','prom_part_3000','office_count_3000','office_sqm_3000','trc_count_3000','trc_sqm_3000','cafe_count_3000','cafe_sum_3000_min_price_avg','cafe_sum_3000_max_price_avg','cafe_avg_price_3000','cafe_count_3000_na_price','cafe_count_3000_price_500','cafe_count_3000_price_1000','cafe_count_3000_price_1500','cafe_count_3000_price_2500','cafe_count_3000_price_4000','cafe_count_3000_price_high','big_church_count_3000','church_count_3000','mosque_count_3000','leisure_count_3000','sport_count_3000','market_count_3000'],
-    ['green_part_5000','prom_part_5000','office_count_5000','office_sqm_5000','trc_count_5000','trc_sqm_5000','cafe_count_5000','cafe_sum_5000_min_price_avg','cafe_sum_5000_max_price_avg','cafe_avg_price_5000','cafe_count_5000_na_price','cafe_count_5000_price_500','cafe_count_5000_price_1000','cafe_count_5000_price_1500','cafe_count_5000_price_2500','cafe_count_5000_price_4000','cafe_count_5000_price_high','big_church_count_5000','church_count_5000','mosque_count_5000','leisure_count_5000','sport_count_5000','market_count_5000'],
-    ['cpi','ppi','usdrub','eurrub','fixed_basket','rent_price_4+room_bus','rent_price_3room_bus','rent_price_2room_bus','rent_price_1room_bus','rent_price_3room_eco','rent_price_2room_eco','rent_price_1room_eco']]
+    ['green_part_5000','prom_part_5000','office_count_5000','office_sqm_5000','trc_count_5000','trc_sqm_5000','cafe_count_5000','cafe_sum_5000_min_price_avg','cafe_sum_5000_max_price_avg','cafe_avg_price_5000','cafe_count_5000_na_price','cafe_count_5000_price_500','cafe_count_5000_price_1000','cafe_count_5000_price_1500','cafe_count_5000_price_2500','cafe_count_5000_price_4000','cafe_count_5000_price_high','big_church_count_5000','church_count_5000','mosque_count_5000','leisure_count_5000','sport_count_5000','market_count_5000']]
 col  = [x for y in col_sets for x in y]
 
-expt  = pd.DataFrame(
-    columns=('tr1','vn','vnopt','optn','tr','prjtt'),
+vn_partition_date  = '2014-07-01' #'2015-01-01' #
+expt_results  = pd.DataFrame(
+    columns=('tr1','vn','optn','tr'),
     index=pd.MultiIndex.from_product(
-        [['2014-07-01'],range(2,8),range(1,8,2),[0,0.1,0.2,0.4],[1],[0.5],[0.25],[8],[0.2],[30]],
-        names=('vn_part_date','max_depth','min_child_weight','gamma','subsample','colsample_bytree','lambda','alpha','eta','early_stop')))
-for idx in expt.index:
+        [[vn_partition_date],range(2,8),range(1,8,2),[0,0.1,0.2,0.4],[0.8],[0.2],[30]],
+        names=('vn_part_date','max_depth','min_child_weight','gamma','colsample_bytree','eta','early_stop')))
+for idx in expt_results.index:
     t0  = time.clock()
-    xgb_params  = idx_to_xgb_params(idx,expt.index.names)
-    #
-    opt_nboost,tv_evals = xgb_temporal_validation(xgb_params,tr,col)
+    vn_part_date,depth,child,gamma,colsamp,eta,early_stop  = idx
+    xgb_params = {'objective':'reg:linear',
+                  'eval_metric':'rmse',
+                  'silent':1,
+                  'booster':'gbtree',
+                    'eta':eta,
+                    'max_depth':depth,
+                    'min_child_weight':child,
+                    'subsample':0.8,
+                    'colsample_bytree':colsamp,
+                    'lambda':1,
+                    'gamma':gamma,
+                    'alpha':0}
+    dtr  = dataframe_to_dmatrix(tr[tr.timestamp<vn_part_date],col)
+    dvn  = dataframe_to_dmatrix(tr[tr.timestamp>=vn_part_date],col)
+    tv_evals = {}
+    tv_model = xgb.train(xgb_params,dtr,num_boost_round=1000,evals=[(dtr,'tr1'),(dvn,'vn')],early_stopping_rounds=early_stop,evals_result=tv_evals,verbose_eval=False)
+    opt_n_booster = tv_model.best_ntree_limit
     #
     dtr  = dataframe_to_dmatrix(tr,col)
     dtt  = dataframe_to_dmatrix(tt,col)
-    model  = xgb.train(xgb_params,dtr,num_boost_round=opt_nboost)
+    tr_evals = {}
+    model    = xgb.train(xgb_params,dtr,num_boost_round=opt_n_booster)#,evals=[(dtr,'tr')],evals_result=tr_evals,verbose_eval=False)
     price_tr_hat  = np.exp(model.predict(dtr)) - 1
     price_tt_hat  = np.exp(model.predict(dtt)) - 1
     tt['price_doc']  = price_tt_hat
-    expt.loc[idx,['tr1','vn','optn','tr']]  = [tv_evals['tr1']['rmse'][opt_nboost-1],tv_evals['vn']['rmse'][opt_nboost-1],opt_nboost,np.sqrt(np.mean((np.log(tr.price_doc+1)-np.log(price_tr_hat+1))**2))]
-    #
-    print idx
-    print expt.loc[[idx]].reset_index(drop=True)
-    print (time.clock()-t0)
+    expt_results.loc[idx,['tr1','vn','optn','tr']]  = [
+        tv_evals['tr1']['rmse'][opt_n_booster-1],
+        tv_evals['vn']['rmse'][opt_n_booster-1],
+        opt_n_booster,
+        np.sqrt(np.mean((np.log(tr.price_doc+1)-np.log(price_tr_hat+1))**2))]
+    print expt_results.loc[[idx]],(time.clock()-t0)
 
-expt['vnopt']  = expt.vn - expt.tr1
-expt['prjtt']  = expt.tr + expt.vnopt
-expt.to_pickle('xgb_optparam_20170502_temp.pkl')
+expt_results['vnopt']  = expt_results.vn - expt_results.tr1
+expt_results['prjtt']  = expt_results.tr + expt_results.vnopt
 
-print expt.sort_values('vn')
-expt.to_clipboard('\t')
+print expt_results.sort_values('vn')
 
-exit(0)
-
-
+expt_results.to_clipboard('\t')
+expt_results.to_pickle('xgb_optparam_temp.pkl')
 
 #-- 2nd Round Parameter Tuning --#
 optidx_1st  = expt_results.sort_values('vn').index[:10].tolist()
@@ -283,3 +316,80 @@ for i,idx in enumerate(expt_results_final.index):
     submit(tt,"20170502_%d_%s" % (i+1,str(idx)))
 
 expt_results_final.to_clipboard('\t')
+
+#-- Extra round --#
+expt_results_extra  = pd.DataFrame(
+    columns=('tr1','vn','optn','tr'),
+    index=pd.MultiIndex.from_product(
+        [['2014-07-01'],range(2,8),range(1,8,2),[0,0.1,0.2,0.4],[1],[0.5],[2],[8],[0.2],[50]],
+        names=('vn_part_date','max_depth','min_child_weight','gamma','subsample','colsample_bytree','lambda','alpha','eta','early_stop')))
+for idx in expt_results_extra.index:
+    t0  = time.clock()
+    vn_part_date,depth,child,gamma,subsamp,colsamp,reg_lambda,reg_alpha,eta,early_stop  = idx
+    xgb_params = {'objective':'reg:linear',
+                  'eval_metric':'rmse',
+                  'silent':1,
+                  'booster':'gbtree',
+                    'eta':eta,
+                    'max_depth':depth,
+                    'min_child_weight':child,
+                    'subsample':subsamp,
+                    'colsample_bytree':colsamp,
+                    'lambda':reg_lambda,
+                    'gamma':gamma,
+                    'alpha':reg_alpha}
+    dtr  = dataframe_to_dmatrix(tr[tr.timestamp<vn_part_date],col)
+    dvn  = dataframe_to_dmatrix(tr[tr.timestamp>=vn_part_date],col)
+    tv_evals = {}
+    tv_model = xgb.train(xgb_params,dtr,num_boost_round=1000,evals=[(dtr,'tr1'),(dvn,'vn')],early_stopping_rounds=early_stop,evals_result=tv_evals,verbose_eval=False)
+    opt_n_booster = tv_model.best_ntree_limit
+    #
+    dtr  = dataframe_to_dmatrix(tr,col)
+    dtt  = dataframe_to_dmatrix(tt,col)
+    model    = xgb.train(xgb_params,dtr,num_boost_round=opt_n_booster)
+    price_tr_hat  = np.exp(model.predict(dtr)) - 1
+    price_tt_hat  = np.exp(model.predict(dtt)) - 1
+    tt['price_doc']  = price_tt_hat
+    expt_results_extra.loc[idx,['tr1','vn','optn','tr']]  = [
+        tv_evals['tr1']['rmse'][opt_n_booster-1],
+        tv_evals['vn']['rmse'][opt_n_booster-1],
+        opt_n_booster,
+        np.sqrt(np.mean((np.log(tr.price_doc+1)-np.log(price_tr_hat+1))**2))]
+    print expt_results_extra.loc[[idx]],(time.clock()-t0)
+
+expt_results_extra['vnopt']  = expt_results_extra.vn - expt_results_extra.tr1
+expt_results_extra['prjtt']  = expt_results_extra.tr + expt_results_extra.vnopt
+
+print expt_results_extra.sort_values('vn')
+
+expt_results_extra.to_clipboard('\t')
+expt_results_extra.to_pickle('xgb_optparam_temp.pkl')
+
+expt_results_extra  = pd.read_pickle('xgb_optparam_20170501-2_extra.pkl')
+
+expt_results_extra.sort_values('vn',inplace=True)
+vn_part_date,depth,child,gamma,subsamp,colsamp,reg_lambda,reg_alpha,eta,early_stop  = expt_results_extra.index[0]
+xgb_params = {'objective':'reg:linear',
+              'eval_metric':'rmse',
+              'silent':1,
+              'booster':'gbtree',
+                'eta':eta,
+                'max_depth':depth,
+                'min_child_weight':child,
+                'subsample':subsamp,
+                'colsample_bytree':colsamp,
+                'lambda':reg_lambda,
+                'gamma':gamma,
+                'alpha':reg_alpha}
+opt_n_booster = expt_results_extra.iloc[0].optn
+#
+dtr  = dataframe_to_dmatrix(tr,col)
+dtt  = dataframe_to_dmatrix(tt,col)
+model    = xgb.train(xgb_params,dtr,num_boost_round=opt_n_booster)
+price_tr_hat  = np.exp(model.predict(dtr)) - 1
+price_tt_hat  = np.exp(model.predict(dtt)) - 1
+if np.abs(expt_results_extra.iloc[0].tr - np.sqrt(np.mean((np.log(tr.price_doc+1)-np.log(price_tr_hat+1))**2))) < 10**-7: print "OK"
+else: print "Warning: metric mismatch"
+
+tt['price_doc']  = price_tt_hat
+submit(tt,"20170502_x_%s" % str(expt_results_extra.index[0]))
