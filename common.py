@@ -3,8 +3,20 @@ import pandas as pd
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
-import xgboost as xgb
 import scipy.stats as stats
+from sklearn.linear_model import LinearRegression
+
+# Modeling public tt optimism
+tv20150101 = pd.DataFrame([[0.04058,-0.02332],[-0.01520,-0.09169],[-0.04556,-0.12798],[-0.02129,-0.09162],[-0.04555,-0.12798]],columns=('vnopt','public ttopt'))
+tv20140701 = pd.DataFrame([[-0.02927,-0.11874],[-0.03481,-0.11942],[-0.02818,-0.12036],[-0.03529,-0.11943],[-0.04006,-0.12745],[-0.00697,-0.10739],[-0.02108,-0.11635],[-0.00733,-0.10714],[-0.01404,-0.11328],[-0.00147,-0.10053],[-0.00737,-0.09168],[-0.02008,-0.10651],[-0.00737,-0.09475],[-0.02008,-0.06564]],columns=('vnopt','public ttopt'))
+lr  = LinearRegression(fit_intercept=True,normalize=False,copy_X=True,n_jobs=1)
+lr.fit(tv20150101.vnopt.values[:,None],tv20150101['public ttopt'].values)
+b_20150101 = lr.coef_[0]
+a_20150101 = lr.intercept_
+lr  = LinearRegression(fit_intercept=True,normalize=False,copy_X=True,n_jobs=1)
+lr.fit(tv20140701.vnopt.values[:,None],tv20140701['public ttopt'].values)
+b_20140701 = lr.coef_[0]
+a_20140701 = lr.intercept_
 
 quantiles = [0,0.01,0.05,0.25,0.5,0.75,0.95,0.99,1]
 
@@ -23,52 +35,12 @@ def clean_data(d):
     d.loc[(d.kitch_sq>500) | (d.kitch_sq<=1),'kitch_sq']  = np.nan
     d.loc[d.state>4,'state'] = np.nan
 
-def xgb_temporal_validation(xgb_params,tr,col,target='price_doc'):
-    baseline_rmsle = np.sqrt(np.mean((np.log(tr.loc[tr.timestamp>=xgb_params['vn_part_date'],target]+1) - np.log(tr.loc[tr.timestamp<xgb_params['vn_part_date'],target]+1).mean())**2))
-    print "Baseline RMSLE = %.5f" % baseline_rmsle
-    dtr  = dataframe_to_dmatrix(tr[tr.timestamp<xgb_params['vn_part_date']],col,target=target)
-    dvn  = dataframe_to_dmatrix(tr[tr.timestamp>=xgb_params['vn_part_date']],col,target=target)
-    tv_evals  = {}
-    tv_model  = xgb.train(xgb_params,dtr,num_boost_round=1000,evals=[(dtr,'tr1'),(dvn,'vn')],early_stopping_rounds=xgb_params['early_stop'],evals_result=tv_evals,verbose_eval=False)
-    opt_nboost = tv_model.best_ntree_limit
-    print "Training RMSLE = %.5f" % tv_evals['tr1']['rmse'][opt_nboost-1]
-    print "Validation RMSLE = %.5F" % tv_evals['vn']['rmse'][opt_nboost-1]
-    return opt_nboost,tv_evals
-
-def idx_to_xgb_params(idx,names):
-    xgb_params = {'objective':'reg:linear',
-                  'eval_metric':'rmse',
-                  'silent':1,
-                  'booster':'gbtree',
-                    'eta':0.3,
-                    'max_depth':6,
-                    'min_child_weight':1,
-                    'subsample':0.8,
-                    'colsample_bytree':1.0,
-                    'lambda':1,
-                    'gamma':0,
-                    'alpha':0}
-    for value,name in zip(idx,names):
-        xgb_params[name]  = value
-    return xgb_params
-
-def xgb_feat_rank(model,col):
-    feat_rank  = pd.concat([
-        pd.Series(model.get_score(importance_type='weight')),
-        pd.Series(model.get_score(importance_type='gain')),
-        pd.Series(model.get_score(importance_type='cover'))],
-        1,keys=('wt','gain','cover')).reindex(index=col)
-    return feat_rank
-
 def pearsonr_w_price(d,col,col_price='price_doc'):
     mask  = d[col].notnull() & d[col_price].notnull()
     x     = d.loc[mask,col]
     y     = d.loc[mask,col_price]
     logy  = np.log(y)
     return stats.pearsonr(x,y),stats.pearsonr(x,logy)
-
-def dataframe_to_dmatrix(d,col,target='price_doc'):
-    return xgb.DMatrix(d[col].fillna(-1),label=np.log(d[target] + 1) if target in d else None)
 
 def submit(tt,name):
     tt[['id','price_doc']].to_csv("submission_%s.csv" % name,index=False)
@@ -102,7 +74,8 @@ def get_basic_features(d):
         ['build_year','build_age','num_room','room_size','kitch_sq','kitch_ratio','state'],
         ["state=%d" % x for x in range(1,5)],
         ['is_investment','is_owneroccupier'],
-        ['monthly_volume','monthly_volume_invest','monthly_volume_occupy']]
+        # ['monthly_volume','monthly_volume_invest','monthly_volume_occupy']
+        ]
     col  = [x for y in col_sets for x in y]
     return d,col
 
@@ -129,7 +102,7 @@ def get_raion_features(d):
         d['build_ratio_'+name]  = d['build_count_'+name] / d['raion_build_count_with_builddate_info']
     #
     col  = ['area_m','raion_popul','raion_pop_density',
-        'raion_volume','raion_volume_invest','raion_volume_occupy',
+        # 'raion_volume','raion_volume_invest','raion_volume_occupy',
         'green_zone_part','indust_part',
         'children_preschool','preschool_quota','preschool_education_centers_raion',
         'children_school','school_quota','school_education_centers_raion',
@@ -160,15 +133,15 @@ def get_raion_features(d):
         'build_ratio_before_1920','build_ratio_1921-1945','build_ratio_1946-1970','build_ratio_1971-1995','build_ratio_after_1995']
     return d,col
 
-def get_ID_median_prices(tr):
+def get_ID_median_prices(tr,target='price_doc'):
     ID_col = ['ID_metro','ID_railroad_station_walk','ID_railroad_station_avto','ID_big_road1','ID_big_road2','ID_railroad_terminal','ID_bus_terminal']
-    tr['price_per_sq']  = tr.price_doc / tr.full_sq
+    tr['price_per_sq']  = tr[target]/ tr.full_sq
     ID_prices = {}
     for col in ID_col:
-        ID_prices[col]  = tr.groupby(col)[['price_doc','price_per_sq']].median().rename(columns={'price_doc':'price'}).sort_values('price',ascending=False)
+        ID_prices[col]  = tr.groupby(col)[[target,'price_per_sq']].median().rename(columns={target:'price'}).sort_values('price',ascending=False)
     return ID_prices
 
-def get_neighborhood_features(d,ID_prices):
+def get_neighborhood_features(d,ID_prices=None):
     col_yesno  = ['water_1line','big_road1_1line','railroad_1line']
     for col in col_yesno:  d[col+'_yes']  = (d[col]=='yes')
     #
@@ -181,11 +154,12 @@ def get_neighborhood_features(d,ID_prices):
         d[col+'_volume']  = d.groupby(col).id.count()[d[col]].values
         d[col+'_volume_invest']  = d[d.is_investment].groupby(col).id.count()[d[col]].fillna(0).values
         d[col+'_volume_occupy']  = d[d.is_owneroccupier].groupby(col).id.count()[d[col]].fillna(0).values
-        d[col+'_price']          = ID_prices[col].price[d[col]].values
-        d[col+'_price_per_sq']   = ID_prices[col].price_per_sq[d[col]].values
+        if ID_prices is not None:
+            d[col+'_price']          = ID_prices[col].price[d[col]].values
+            d[col+'_price_per_sq']   = ID_prices[col].price_per_sq[d[col]].values
     #
     col_sets  = [
-        [x+'_'+name for x in ['ID_metro','ID_railroad_station_walk','ID_railroad_station_avto','ID_big_road1','ID_big_road2','ID_railroad_terminal','ID_bus_terminal'] for name in ['volume','volume_invest','volume_occupy','price','price_per_sq']],
+        # [x+'_'+name for x in ['ID_metro','ID_railroad_station_walk','ID_railroad_station_avto','ID_big_road1','ID_big_road2','ID_railroad_terminal','ID_bus_terminal'] for name in (['volume','volume_invest','volume_occupy'] if ID_prices is None else ['volume','volume_invest','volume_occupy','price','price_per_sq'])],
         # ["ID_metro_thd=%.1f" % name for name in get_dummy_values(tt,'ID_metro',99)],
         # ["ID_railroad_station_walk_thd=%.1f" % name for name in get_dummy_values(tt,'ID_railroad_station_walk',200)],
         # ["ID_railroad_station_avto_thd=%.1f" % name for name in get_dummy_values(tt,'ID_railroad_station_avto',200)],
@@ -207,11 +181,11 @@ def get_neighborhood_features(d,ID_prices):
     col  = [x for y in col_sets for x in y]
     return d,col
 
-def get_features(d,ID_prices):
+def get_features(d,ID_prices=None):
     d,feat_basic  = get_basic_features(d)
     d,feat_raion  = get_raion_features(d)
-    d,feat_neighborhood = get_neighborhood_features(d,ID_prices)
-    feat_macro    = ['cpi','ppi','usdrub','eurrub','fixed_basket','rent_price_4+room_bus','rent_price_3room_bus','rent_price_2room_bus','rent_price_1room_bus','rent_price_3room_eco','rent_price_2room_eco','rent_price_1room_eco']
+    d,feat_neighborhood = get_neighborhood_features(d,ID_prices=ID_prices)
+    feat_macro    = ['balance_trade','balance_trade_growth','eurrub','average_provision_of_build_contract','micex_rgbi_tr','micex_cbi_tr','deposits_rate','mortgage_value','mortgage_rate','income_per_cap','rent_price_4+room_bus','museum_visitis_per_100_cap','apartment_build'] #macro_kaggle #['cpi','ppi','balance_trade','balance_trade_growth','usdrub','eurrub','average_provision_of_build_contract','average_provision_of_build_contract_moscow','rts','micex','micex_rgbi_tr','micex_cbi_tr','deposits_value','deposits_growth','deposits_rate','mortgage_value','mortgage_growth','mortgage_rate','income_per_cap','real_dispos_income_per_cap_growth','fixed_basket','rent_price_4+room_bus','rent_price_3room_bus','rent_price_2room_bus','rent_price_1room_bus','rent_price_3room_eco','rent_price_2room_eco','rent_price_1room_eco','theaters_viewers_per_1000_cap','seats_theather_rfmin_per_100000_cap','museum_visitis_per_100_cap','apartment_build','apartment_fund_sqm'] #macro2 ['cpi','ppi','usdrub','eurrub','fixed_basket','rent_price_4+room_bus','rent_price_3room_bus','rent_price_2room_bus','rent_price_1room_bus','rent_price_3room_eco','rent_price_2room_eco','rent_price_1room_eco'] #macro1 #
     #
     feat  = feat_basic + feat_raion + feat_neighborhood + feat_macro
     #

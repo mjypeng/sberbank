@@ -146,13 +146,6 @@ d[d.num_room.notnull()].groupby('ym')[['id','max_floor','material','build_year',
 np.round(tr.groupby(['ID_metro','ID_railroad_station_walk','ID_railroad_station_avto','ID_big_road1','ID_big_road2','ID_railroad_terminal','ID_bus_terminal'])[['price_doc','price_per_sq']].agg([np.median,lambda x:np.subtract(*x.quantile([0.75,0.25]))])).to_clipboard('\t')
 
 
-def get_ID_prices(tr):
-    ID_col = ['ID_metro','ID_railroad_station_walk','ID_railroad_station_avto','ID_big_road1','ID_big_road2','ID_railroad_terminal','ID_bus_terminal']
-    tr['price_per_sq']  = tr.price_doc / tr.full_sq
-    ID_prices = {}
-    for col in ID_col:
-        ID_prices[col]  = tr.groupby(col)[['price_doc','price_per_sq']].median().rename(columns={'price_doc':'price'}).sort_values('price',ascending=False)
-
 
 tt[ID_col].isin(tr[ID_col])
 
